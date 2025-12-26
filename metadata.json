@@ -1,0 +1,7 @@
+{
+  "name": "GCSE Multi-Agent Syetem",
+  "description": "An educational multi-agent system that solves GCSE problems using textbook-specific knowledge and structured pedagogical workflows.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
