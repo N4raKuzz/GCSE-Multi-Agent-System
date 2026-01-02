@@ -1,20 +1,22 @@
 import os
 import io
-from unstructured.partition.pdf import partition_pdf
+from dotenv import load_dotenv
+from docling.document_converter import DocumentConverter
+from unstructured.partition.pdf import partition
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from langchain_community.graphs import Neo4jGraph
-from langchain_neo4j import Neo4jVector
+from langchain_neo4j import Neo4jVector, Neo4jGraph
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from typing import List
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+load_dotenv()
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 NEO4J_URI = os.getenv("NEO4J_URI")
 NEO4J_USERNAME = os.getenv("NEO4J_USERNAME")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
 
 # Initialize Gemini Model & Embeddings
-llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, api_key=GOOGLE_API_KEY)
 embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
 
 class Relationship(BaseModel):
@@ -59,19 +61,34 @@ class IngestionPipeline():
 
         self.extraction_chain = prompt | llm.with_structured_output(KnowledgeGraph)
 
-    def parse_pdf(file):
+    def parse_pdf(self, file):
         
         try:
             # Read the uploaded file into a BytesIO stream
             file_content = file.read()
             file_stream = io.BytesIO(file_content)
+            file_stream.seek(0)
 
             # 'strategy="fast"' -> text-based PDFs. 
             # 'strategy="hi_res"' -> OCR required for scanned images.
-            elements = partition_pdf(file=file_stream, strategy="fast")
+            elements = partition(filename=file, strategy="auto")
+
+            pages = set()
+            for el in elements:
+                p = el.metadata.page_number
+                if p: pages.add(p)
+                
+            print(f"Total elements found: {len(elements)}")
+            print(f"Unique pages detected: {sorted(list(pages))}")
 
             # Join the elements into a single string
             parsed_text = "\n\n".join([str(el) for el in elements])
+
+            # converter = DocumentConverter()
+            # parsed_text = converter.convert(file).document.export_to_markdown()
+
+            # with open("./RAG/parsed_pdf.txt", "w", encoding="utf-8") as f:
+            #     f.write(parsed_text)
 
             return parsed_text
 
@@ -82,6 +99,15 @@ class IngestionPipeline():
 
         markdown_text = self.parse_pdf(input_materials)
         graph_data = self.extraction_chain.invoke({"text": markdown_text})
+
+        Neo4jVector.from_texts(
+            [markdown_text], 
+            embeddings, 
+            url=NEO4J_URI, 
+            username=NEO4J_USERNAME, 
+            password=NEO4J_PASSWORD,
+            node_label="Chunk"
+        )
 
         for entity in graph_data.entities:
             # Use MERGE to ensure uniqueness based on the concept name
@@ -112,5 +138,24 @@ class IngestionPipeline():
 
         return graph_data
         
+if __name__ == "__main__":
+
+    pdf_path = "./Materials/SMC_2025_paper.pdf"
+    
+    pipeline = IngestionPipeline()
+    print(f"--- Starting Ingestion for {pdf_path} ---")
+    
+    try:
+        with open(pdf_path, "rb") as f:
+            # The pipeline handles parsing, vectorizing, and graph mapping
+            result = pipeline.ingest_with_gemini(pdf_path)
+            print(f"Success: {result}")
+            
+    except FileNotFoundError:
+        print(f"Error: The file {pdf_path} was not found.")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+
+    print("--- Knowledge Base Update Complete ---")
 
     
