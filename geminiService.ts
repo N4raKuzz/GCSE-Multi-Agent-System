@@ -1,17 +1,18 @@
 
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { TextbookContent, Solution, AgentRole, ImageData } from "./types";
+import neo4j from 'neo4j-driver';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const driver = neo4j.driver(process.env.NEO4J_URI!, neo4j.auth.basic(process.env.NEO4J_USERNAME!, process.env.NEO4J_PASSWORD!));
 
 export class GCSEMultiAgentSystem {
   private modelName = 'gemini-3-pro-preview';
 
   async solve(problem: string, context: TextbookContent[], images: ImageData[]): Promise<Solution> {
-    const contextText = context.map(c => `--- SOURCE: ${c.sourceName} ---\n${c.text}`).join('\n\n');
     
-    // Prepare image parts for Gemini API
-    const imageParts = images.map(img => ({
+    // Prepare image
+    const image = images.map(img => ({
       inlineData: {
         data: img.base64.split(',')[1] || img.base64,
         mimeType: img.mimeType
@@ -19,63 +20,92 @@ export class GCSEMultiAgentSystem {
     }));
 
     // 1. Librarian Agent: Identify Knowledge Points & Extract Formulas
-    const librarianOutput = await this.runLibrarian(problem, contextText, imageParts);
+    const memo = await this.runLibrarian(problem, image);
     
     // 2. Solver Agent: Apply extracted knowledge to the problem
-    const steps = await this.runSolver(problem, librarianOutput, imageParts);
+    const solution = await this.runSolver(problem, memo, image);
 
     // 3. Examiner Agent: Review the pedagogical accuracy and strict use of provided knowledge
-    const review = await this.runExaminer(problem, steps, librarianOutput, imageParts);
+    const review = await this.runExaminer(problem, solution, memo, image);
 
     return {
       steps: [
-        { title: 'Relevant Knowledge Points & Formulas', content: librarianOutput, agent: 'Librarian' },
-        ...steps
+        { title: 'Relevant Knowledge Points & Formulas', content: memo, agent: 'Librarian' },
+        ...solution
       ],
-      finalAnswer: steps[steps.length - 1]?.content || "Could not generate answer",
+      finalAnswer: solution[solution.length - 1]?.content || "Could not generate answer",
       curriculumCheck: review
     };
   }
 
-  private async runLibrarian(problem: string, context: string, imageParts: any[]): Promise<string> {
-    const response = await ai.models.generateContent({
+  private async runLibrarian(problem: string, imageParts: any[]): Promise<string> {
+    // Generate Cypher query based on user's problem
+    const cypherGenerationResponse = await ai.models.generateContent({
       model: this.modelName,
       contents: {
         parts: [
           ...imageParts,
-          { text: `You are the 'Librarian Agent' for a GCSE education platform.
+          { text: `Analyze this problem and write a Neo4j Cypher query to retrieve relevant academic concepts.
+          
+          GRAPH SCHEMA:
+          - Nodes: (c:Concept {name: string, type: string})
+          - Relationships: [:RELATED_TO {type: 'PREREQUISITE_FOR' | 'OUTCOME' | 'PURPOSE_OF' | 'PART_OF' | 'SUBTYPE' | 'SUPERTYPE' | 'FOLLOWS' | 'SIMULTANEOUSLY' }]
           
           TASK:
-          1. Analyze the student's problem (text and any attached images).
-          2. Identify the specific TOPICS and KNOWLEDGE POINTS required (e.g., "Pythagoras' Theorem", "Mole Calculations", "Newton's Second Law").
-          3. Search the provided Textbook Context to find the EXACT formulas, definitions, and rules mentioned in the curriculum.
-          4. Output a "Research Memo" that lists ONLY these findings.
+          Write a Cypher query that matches Concepts mentioned in the problem AND their immediate prerequisites or components.
           
-          CRITICAL RESTRICTION:
-          - DO NOT solve the problem.
-          - DO NOT perform any calculations.
-          - DO NOT provide any steps towards the answer.
-          - ONLY provide the underlying academic material required to solve it.
-          
-          Problem Details: ${problem}
-          
-          Textbook Context:
-          ${context.substring(0, 800000)}` }
+          EXAMPLE OUTPUT:
+          MATCH (c:Concept)-[r:RELATED_TO]->(neighbor) 
+          WHERE c.name IN ['Mitochondria', 'Cell'] 
+          RETURN c.name, r.type, neighbor.name;
+
+          Problem: ${problem}` }
         ]
       },
       config: {
-        systemInstruction: "You are an expert academic librarian. Your specialty is curriculum-aligned research. You provide facts, definitions, and formulas without solving problems.",
+        systemInstruction: "Output ONLY the Cypher query. No markdown, no explanation.",
       }
     });
-    return response.text || "No relevant knowledge points found in the provided textbook context.";
-  }
 
-  private async runSolver(problem: string, knowledge: string, imageParts: any[]): Promise<any[]> {
+    const query = cypherGenerationResponse.text.trim().replace(/```cypher|```/g, "");
+
+    // Execute the Neo4j query
+    const session = driver.session();
+    let graphResults = "";
+    
+    try {
+      const result = await session.run(query);
+      graphResults = result.records.map(record => {
+        return `${record.get('c.name')} --[${record.get('r.type')}]--> ${record.get('neighbor.name')}`;
+      }).join("\n");
+    } finally {
+      await session.close();
+    }
+
+    // Create the Research Memo
+    const memo = await ai.models.generateContent({
+      model: this.modelName,
+      contents: {
+          parts: [{ text: `Based on these graph results, create a Research Memo for the student's problem.
+          
+          Graph Results:
+          ${graphResults}
+          
+          Problem: ${problem}
+          
+          RESTRICTION: Do not solve. Provide only definitions and formulas found in the graph.` }]
+      }
+    });
+
+  return memo.text;
+}
+
+  private async runSolver(problem: string, knowledge: string, image: any[]): Promise<any[]> {
     const response = await ai.models.generateContent({
       model: this.modelName,
       contents: {
         parts: [
-          ...imageParts,
+          ...image,
           { text: `You are the 'Solver Agent'. Your task is to solve the GCSE problem step-by-step.
           
           CONSTRAINTS:
