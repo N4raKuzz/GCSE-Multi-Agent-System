@@ -1,8 +1,9 @@
 import os
 import io
+import argparse
 from dotenv import load_dotenv
 from docling.document_converter import DocumentConverter
-from unstructured.partition.pdf import partition
+from unstructured.partition.auto import partition
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_neo4j import Neo4jVector, Neo4jGraph
 from langchain_core.prompts import ChatPromptTemplate
@@ -40,16 +41,25 @@ class IngestionPipeline():
 
         # Extraction Chain
         system_prompt = """
-        You are an expert GCSE Curriculum Librarian. Your task is to extract a Knowledge Graph 
-        from textbook Markdown text. 
+        You are an expert Librarian. Your task is to extract a Knowledge Graph from the given text materials.
+        The number of PAGES and the academic SYSTEMS included in the input texts may vary significantly. You need to find a balance in terms of the quantity of concepts. 
 
-        1. Identify key 'Entities' (Scientific concepts, laws, formulas, or historical figures).
-        2. Identify 'Relationship's between them. 
+        Follow these rules:
+        1. Identify key 'Entity's. Usually a Scientific Concepts, Laws, Formulas, or Historical figures.
+        2. Identify 'Relationship's between them. Entity (Concept A) -- Relationship -> Entity (Concept B)
         3. Focus on pedagogical links: 
-        - 'PREREQUISITE_FOR' (Concept A is needed to understand Concept B)
-        - 'PART_OF' (Mitochondria is part of a Cell)
-        - 'RELATES_TO' (Photosynthesis in Bio relates to Energy in Physics)
-        - 'PRODUCES' or 'CAUSES'
+            3.1 Causal Relationship:
+            - 'PREREQUISITE_FOR' : Concept A is needed to understand Concept B / Concept A is (one of the) condition of Concept B        
+            - 'OUTCOME' : The fact that Concept A directly lead to the occurance of Concept B. 
+            - 'PURPOSE_OF' : Concept A is the desired outcome that Concpet B is intended to achieve
+            3.2 Compositional Relationships
+            - 'PART_OF' : Concept A is the component of Concept B.
+            - 'SUBTYPE' : Concept A is a more specific instance of Concept B.
+            - 'SUPERTYPE' : Concept A is a broader category of Concept B.
+            3.3 Temporal Relationship
+            - 'FOLLOWS' :  Concept A must occur or is true after Concept B in a defined order.
+            - 'SIMULTANEOUSLY' : Concept A and Concept B occur or are true at the same time.
+        4. Check if the Entity-Relationship you extract is a KNOWLEDGE. Good example : Mitochondria PART_OF Cell; Bad example : Math PREREQUISITE_FOR Further Math
 
         Output must be in strict JSON format.
         """
@@ -71,7 +81,7 @@ class IngestionPipeline():
 
             # 'strategy="fast"' -> text-based PDFs. 
             # 'strategy="hi_res"' -> OCR required for scanned images.
-            elements = partition(filename=file, strategy="auto")
+            elements = partition(file=file_stream, strategy="auto")
 
             pages = set()
             for el in elements:
@@ -87,8 +97,8 @@ class IngestionPipeline():
             # converter = DocumentConverter()
             # parsed_text = converter.convert(file).document.export_to_markdown()
 
-            # with open("./RAG/parsed_pdf.txt", "w", encoding="utf-8") as f:
-            #     f.write(parsed_text)
+            with open("./RAG/parsed_pdf.txt", "w", encoding="utf-8") as f:
+                f.write(parsed_text)
 
             return parsed_text
 
@@ -137,18 +147,22 @@ class IngestionPipeline():
         print(f"Successfully ingested {len(graph_data.entities)} entities and {len(graph_data.relationships)} relationships.")
 
         return graph_data
-        
-if __name__ == "__main__":
-
-    pdf_path = "./Materials/SMC_2025_paper.pdf"
     
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "pdf_path", type=str
+    )
+
+    pdf_path = parser.parse_args().pdf_path
+
     pipeline = IngestionPipeline()
     print(f"--- Starting Ingestion for {pdf_path} ---")
     
     try:
         with open(pdf_path, "rb") as f:
             # The pipeline handles parsing, vectorizing, and graph mapping
-            result = pipeline.ingest_with_gemini(pdf_path)
+            result = pipeline.ingest_with_gemini(f)
             print(f"Success: {result}")
             
     except FileNotFoundError:
@@ -158,4 +172,6 @@ if __name__ == "__main__":
 
     print("--- Knowledge Base Update Complete ---")
 
+if __name__ == "__main__":
+    main()
     
