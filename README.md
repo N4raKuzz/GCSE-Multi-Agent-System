@@ -19,11 +19,15 @@ By leveraging Agentic RAG (Retrieval-Augmented Generation), the system does not 
  
    Set the `GEMINI_API_KEY` in [.env](.env) to your Gemini API key
 
-2. Create environment and run the ingestion pipeline. In the first terminal:
-   `conda env update -f environment.yml`
+2. Create environment and run the ingestion pipeline. 
+   In the first terminal:
+   ```
+   conda env update -f environment.yml
+   conda activate gcsekg
+   pip install -r requirement
+   ```
    Activate the environment and run the FastAPI
    ```
-   conda activate gcsekg
    python RAG/main.py
    ```
    The ingestion pipeline API will be running at `http://localhost:8000/ingest`
@@ -31,6 +35,9 @@ By leveraging Agentic RAG (Retrieval-Augmented Generation), the system does not 
 
 3. Start the app locally. In the second terminal:
    Install dependencies:
-   `npm install`
+   ```
+   npm install
+   ```
    Run the app:
-   `npm run dev`
+   ```npm run dev
+   ```
