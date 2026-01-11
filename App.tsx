@@ -59,23 +59,23 @@ const App: React.FC = () => {
     setError(null);
 
     try {
-      const arrayBuffer = await file.arrayBuffer();
-      const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-      const pdf = await loadingTask.promise;
-      
-      let fullText = '';
-      const numPages = pdf.numPages;
+      // Setup and call ingestion pipeline
+      const formData = new FormData();
+      formData.append('file', file); 
+      const response = await fetch('http://localhost:8000/ingest', {
+        method: 'POST',
+        body: formData,
+      });
 
-      for (let i = 1; i <= numPages; i++) {
-        const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        const pageText = textContent.items.map((item: any) => item.str).join(' ');
-        fullText += `[Page ${i}]\n${pageText}\n\n`;
-        setExtractionProgress(Math.round((i / numPages) * 100));
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to process file on server");
       }
 
-      setTextbookContext(prev => [...prev, { text: fullText, sourceName: `${file.name} (${numPages} pgs)` }]);
+      const result = await response.json();
+      setExtractionProgress(100);
     } catch (err: any) {
+      console.error("Ingestion Error:", err);
       setError("Failed to process PDF: " + err.message);
     } finally {
       setIsExtracting(false);

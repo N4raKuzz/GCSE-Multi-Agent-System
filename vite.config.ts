@@ -11,8 +11,11 @@ export default defineConfig(({ mode }) => {
       },
       plugins: [react()],
       define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+        'process.env.API_KEY': JSON.stringify(env.GOOGLE_API_KEY),
+        'process.env.GEMINI_API_KEY': JSON.stringify(env.GOOGLE_API_KEY),
+        'process.env.NEO4J_URI': JSON.stringify(env.NEO4J_URI),
+        'process.env.NEO4J_USERNAME': JSON.stringify(env.NEO4J_USERNAME),
+        'process.env.NEO4J_PASSWORD': JSON.stringify(env.NEO4J_PASSWORD)
       },
       resolve: {
         alias: {
