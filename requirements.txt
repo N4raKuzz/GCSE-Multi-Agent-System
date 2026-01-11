@@ -1,0 +1,8 @@
+docling==2.66.0
+fastapi==0.128.0
+langchain_core==1.2.7
+langchain_google_genai==4.1.3
+langchain_neo4j==0.7.0
+pydantic==2.12.5
+unstructured==0.18.24
+uvicorn==0.40.0
